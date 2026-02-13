@@ -16,6 +16,11 @@ from pyspark.sql import SQLContext
 from pyspark.sql.functions import col, date_format,substring, trim
 from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql.functions import current_timestamp, lit
+from pyspark.sql.types import (
+    StructType, StructField,
+    StringType, TimestampType,
+    DecimalType, DateType
+)
 
 # -------------------------------------------------------------------------
 # Logging Setup
@@ -143,8 +148,6 @@ def get_raw_file(bucket, prefix):
 
     return txt_files[0]
 
-print("==== JOB STARTED ====")
-
 print("Spark session created successfully")
 # -------------------------------------------------------------------------
 # Main ETL Logic
@@ -155,74 +158,101 @@ def process_file(csv_key):
     full_path = f"s3://{data_bucket}/{csv_key}"
     logger.info(f"Reading file: {full_path}")
 
+    # ---------------------------------------------------------------------
+    # Read Source File
+    # ---------------------------------------------------------------------
     df = (
         spark.read
         .option("header", "true")
-        .option("inferSchema", "true")
+        .option("inferSchema", "false")
         .option("trimValues", "true")
         .csv(full_path)
     )
 
     logger.info(f"Detected columns: {df.columns}")
 
-    # Column Mapping
-    column_mapping = {
-        "CLUB NAME": "ClubName",
-        "CLUB NO": "ClubNo",
-        "CLUB REGION": "RegionNo",
-        "GROUP": "GroupCode",
-        "SUB GROUP": "SubGroupCode",
-        "AGENT": "AgentType",
-        "CAMPAIGN": "CampaignCode",
-        "CAMPAIGN TYPE": "CampaignType",
-        "TRAN DATE": "TransactionDate",
-        "ADMIN FEE": "AdminFee",
-        "PRIMARY": "PrimaryIndicator",
-        "ADULT": "AdultIndicator",
-        "DEPENDENT": "DependantIndicator",
-        "IND PLUS": "PlusProductIndicator",
-        "FAM PLUS": "FamilyPlusIndicator",
-        "IND-PREMIER": "PremierProductIndicator",
-        "FAM PREMIER": "FamilyPremierIndicator",
-        "RV/CYL": "RVCyIIndicator",
-        "A/R": "ARIndicator",
-        "MEMBER #": "MemberNo",
-        "SALES REGION": "SalesRegion",
-        "DO": "OfficeNo",
-        "DO NAME": "OfficaName",
-        "EMPLOYEE #": "EmployeeNo",
-        "AGENT ID": "AgentID",
-        "JOB": "JobCode",
-        "ROLE": "Rolecode",
-        "TRANS": "TransType"
-    }
+    structured_df = (
+        df
+        .withColumn("ClubName", col("CLUB NAME").cast(StringType()))
+        .withColumn("ClubNo", col("CLUB NO").cast(StringType()))
+        .withColumn("RegionNo", col("CLUB REGION").cast(StringType()))
+        .withColumn("GroupCode", col("GROUP").cast(StringType()))
+        .withColumn("SubGroupCode", col("SUB GROUP").cast(StringType()))
+        .withColumn("AgentType", col("AGENT").cast(StringType()))
+        .withColumn("CampaignCode", col("CAMPAIGN").cast(StringType()))
+        .withColumn("CampaignType", col("CAMPAIGN TYPE").cast(StringType()))
+        .withColumn("TransactionDate", col("TRAN DATE").cast(DateType()))
+        .withColumn("AdminFee", col("ADMIN FEE").cast(DecimalType(18,2)))
+        .withColumn("PrimaryIndicator", col("PRIMARY").cast(StringType()))
+        .withColumn("AdultIndicator", col("ADULT").cast(StringType()))
+        .withColumn("DependantIndicator", col("DEPENDENT").cast(StringType()))
+        .withColumn("PlusProductIndicator", col("IND PLUS").cast(StringType()))
+        .withColumn("FamilyPlusIndicator", col("FAM PLUS").cast(StringType()))
+        .withColumn("PremierProductIndicator", col("IND-PREMIER").cast(StringType()))
+        .withColumn("FamilyPremierIndicator", col("FAM PREMIER").cast(StringType()))
+        .withColumn("RVCyIIndicator", col("RV/CYL").cast(StringType()))
+        .withColumn("ARIndicator", col("A/R").cast(StringType()))
+        .withColumn("MemberNo", col("MEMBER #").cast(StringType()))
+        .withColumn("SalesRegion", col("SALES REGION").cast(StringType()))
+        .withColumn("OfficeNo", col("DO").cast(StringType()))
+        .withColumn("OfficaName", col("DO NAME").cast(StringType()))
+        .withColumn("EmployeeNo", col("EMPLOYEE #").cast(StringType()))
+        .withColumn("AgentID", col("AGENT ID").cast(StringType()))
+        .withColumn("JobCode", col("JOB").cast(StringType()))
+        .withColumn("Rolecode", col("ROLE").cast(StringType()))
+        .withColumn("TransType", col("TRANS").cast(StringType()))
+        .withColumn("Extract_T", current_timestamp())
+    )
 
-    # Rename columns
-    for old_col, new_col in column_mapping.items():
-        if old_col in df.columns:
-            df = df.withColumnRenamed(old_col, new_col)
+    # ---------------------------------------------------------------------
+    # Define Final Schema Explicitly
+    # ---------------------------------------------------------------------
+    final_schema = StructType([
+        StructField("ClubName", StringType(), True),
+        StructField("ClubNo", StringType(), True),
+        StructField("RegionNo", StringType(), True),
+        StructField("GroupCode", StringType(), True),
+        StructField("SubGroupCode", StringType(), True),
+        StructField("AgentType", StringType(), True),
+        StructField("CampaignCode", StringType(), True),
+        StructField("CampaignType", StringType(), True),
+        StructField("TransactionDate", DateType(), True),
+        StructField("AdminFee", DecimalType(18,2), True),
+        StructField("PrimaryIndicator", StringType(), True),
+        StructField("AdultIndicator", StringType(), True),
+        StructField("DependantIndicator", StringType(), True),
+        StructField("PlusProductIndicator", StringType(), True),
+        StructField("FamilyPlusIndicator", StringType(), True),
+        StructField("PremierProductIndicator", StringType(), True),
+        StructField("FamilyPremierIndicator", StringType(), True),
+        StructField("RVCyIIndicator", StringType(), True),
+        StructField("ARIndicator", StringType(), True),
+        StructField("MemberNo", StringType(), True),
+        StructField("SalesRegion", StringType(), True),
+        StructField("OfficeNo", StringType(), True),
+        StructField("OfficaName", StringType(), True),
+        StructField("EmployeeNo", StringType(), True),
+        StructField("AgentID", StringType(), True),
+        StructField("JobCode", StringType(), True),
+        StructField("Rolecode", StringType(), True),
+        StructField("TransType", StringType(), True),
+        StructField("Extract_T", TimestampType(), True)
+    ])
 
-    # Add missing Extract_T column
-    df = df.withColumn("Extract_T", current_timestamp())
+    # ---------------------------------------------------------------------
+    # Enforce Final Column Order
+    # ---------------------------------------------------------------------
+    final_df = structured_df.select([field.name for field in final_schema.fields])
 
-    # Reorder columns
-    final_columns = [
-        "ClubName", "ClubNo", "RegionNo", "GroupCode", "SubGroupCode",
-        "AgentType", "CampaignCode", "CampaignType", "TransactionDate",
-        "AdminFee", "PrimaryIndicator", "AdultIndicator",
-        "DependantIndicator", "PlusProductIndicator",
-        "FamilyPlusIndicator", "PremierProductIndicator",
-        "FamilyPremierIndicator", "RVCyIIndicator", "ARIndicator",
-        "MemberNo", "SalesRegion", "OfficeNo", "OfficaName",
-        "EmployeeNo", "AgentID", "JobCode", "Rolecode",
-        "TransType", "Extract_T"
-    ]
+    logger.info("Final schema enforced:")
+    final_df.printSchema()
 
-    df = df.select(final_columns)
+    # ---------------------------------------------------------------------
+    # Write to Iceberg
+    # ---------------------------------------------------------------------
+    logger.info(f"Writing to Iceberg table: {TARGET_IDENTIFIER}")
 
-    logger.info("Writing to Iceberg table")
-
-    df.createOrReplaceTempView("staging_table")
+    final_df.createOrReplaceTempView("staging_table")
 
     spark.sql(f"""
         CREATE OR REPLACE TABLE {TARGET_IDENTIFIER}
@@ -236,10 +266,6 @@ def process_file(csv_key):
     archive_raw_file(TGT_TBL, csv_key)
     write_log(TGT_TBL, "Job completed successfully")
 
-
-# -------------------------------------------------------------------------
-# Driver
-# -------------------------------------------------------------------------
 
 def main():
     prefix = f"{raw_file_folder}/{TGT_TBL}/"
@@ -255,6 +281,8 @@ def main():
         write_log(TGT_TBL, error_message)
         raise
 
-
+# -------------------------------------------------------------------------
+# Driver
+# -------------------------------------------------------------------------
 if __name__ == "__main__":
     main()

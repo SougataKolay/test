@@ -1,3 +1,27 @@
+'''
+Previously:
+input_temp → S3 path of raw file
+raw_df = spark.read.text(input_temp)
+raw_df now holds unstructured text
+header_df = spark.read.csv(HDR_PATH)
+header_df holds metadata
+Loop over header_rows
+Create new columns in parsed_df
+parsed_df.createOrReplaceTempView(...)
+CREATE OR REPLACE TABLE {CATALOG}.{TGT_DB}.{TGT_TBL}
+Spark writes parsed_df to Iceberg
+
+Now:
+input_temp is removed
+raw_df is read directly from S3 path of raw file
+
+Description:
+AWS Glue Spark job that reads raw text data from S3, parses it based on metadata headers,
+and writes the processed data to an Iceberg table in the data catalog.
+Includes logging, error handling, and column transformations using PySpark.
+
+'''
+
 import sys
 import logging
 import boto3,json, re, traceback
@@ -153,7 +177,7 @@ def get_raw_file(bucket, prefix):
 #         f.setdefault("metadata", {})
 #     return StructType.fromJson(schema)
     
-print("==== JOB STARTED ====")
+#print("==== JOB STARTED ====")
 
 print("Spark session created successfully")
 
