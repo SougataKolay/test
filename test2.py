@@ -202,6 +202,18 @@ def process_file(csv_key):
         .withColumn("Rolecode", col("ROLE").cast(StringType()))
         .withColumn("TransType", col("TRANS").cast(StringType()))
         .withColumn("Extract_T", current_timestamp())
+        #.withColumn("Extract_T", lit(None).cast(TimestampType()))
+        # .select(
+        #     "ClubName", "ClubNo", "RegionNo", "GroupCode",
+        #     "SubGroupCode", "AgentType", "CampaignCode",
+        #     "CampaignType", "TransactionDate", "AdminFee",
+        #     "PrimaryIndicator", "AdultIndicator", "DependantIndicator",
+        #     "PlusProductIndicator", "FamilyPlusIndicator",
+        #     "PremierProductIndicator", "FamilyPremierIndicator",
+        #     "RVCyIIndicator", "ARIndicator", "MemberNo",
+        #     "SalesRegion", "OfficeNo", "OfficaName", "EmployeeNo",
+        #     "AgentID", "JobCode", "Rolecode", "TransType", "Extract_T"
+        # )
     )
 
     # ---------------------------------------------------------------------
