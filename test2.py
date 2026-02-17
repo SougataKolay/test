@@ -13,7 +13,7 @@ from pyspark.sql.utils import AnalysisException
 from awsglue.utils import getResolvedOptions
 from pyspark.sql import SQLContext
 from pyspark.sql.functions import col, date_format,substring, trim
-from pyspark.sql.types import StructType, StructField, StringType
+#from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql.functions import current_timestamp, lit
 from pyspark.sql.types import (
     StructType, StructField,
@@ -46,25 +46,26 @@ args = getResolvedOptions(
         "JOB_NAME",
         "database_name",
         "table_name",
-        "CATALOG",
+        "catalog",
         "raw_file_folder",
         "data_bucket",
         "log_bucket"
     ]
 )
 
-print("Resolved parameters:")
-for k, v in args.items():
-    print(f"  {k} = {v}")
+# print("Resolved parameters:")
+# for k, v in args.items():
+#     print(f"  {k} = {v}")
 
 TGT_DB = args["database_name"]
 TGT_TBL = args["table_name"]
-CATALOG = args["CATALOG"]
+CATALOG = args["catalog"]
 raw_file_folder = args["raw_file_folder"].strip().rstrip("/")
 data_bucket = args["data_bucket"].strip().rstrip("/")
 log_bucket = args["log_bucket"]
 
-TARGET_IDENTIFIER = f"{CATALOG}.{TGT_DB}.{TGT_TBL}"
+W1_TABLE = f"{CATALOG}.{TGT_DB}.mbrship_sales_trans_w1"
+BASE_TABLE = f"{CATALOG}.{TGT_DB}.mbrship_sales_trans_by_week"
 
 # -------------------------------------------------------------------------
 # Spark / Iceberg Initialization
@@ -110,9 +111,6 @@ def write_log(target_table, message):
         Body=message.encode("utf-8")
     )
 
-    logger.info(f"Log written to s3://{LOG_BUCKET}/{log_key}")
-    
-# Archive input file upon success
 def archive_raw_file(target_table, csv_key):
     ts = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
     filename = csv_key.split("/")[-1]
@@ -126,19 +124,16 @@ def archive_raw_file(target_table, csv_key):
 
     s3.delete_object(Bucket=data_bucket, Key=csv_key)
 
-    logger.info(f"Archived file to s3://{data_bucket}/{archive_key}")
+# -------------------------------------------------------------------------
+# Get TXT File
+# -------------------------------------------------------------------------
 
-# -------------------------------------------------------------------------
-# Lookup TXT in input folder (must be exactly one)
-# -------------------------------------------------------------------------
 def get_raw_file(bucket, prefix):
     resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-    if "Contents" not in resp:
-        raise ValueError(f"No files found under s3://{bucket}/{prefix}")
 
     txt_files = [
         obj["Key"]
-        for obj in resp["Contents"]
+        for obj in resp.get("Contents", [])
         if obj["Key"].endswith(".txt")
     ]
 
@@ -147,9 +142,8 @@ def get_raw_file(bucket, prefix):
 
     return txt_files[0]
 
-print("Spark session created successfully")
 # -------------------------------------------------------------------------
-# Main ETL Logic
+# MAIN ETL LOGIC
 # -------------------------------------------------------------------------
 
 def process_file(csv_key):
@@ -157,9 +151,6 @@ def process_file(csv_key):
     full_path = f"s3://{data_bucket}/{csv_key}"
     logger.info(f"Reading file: {full_path}")
 
-    # ---------------------------------------------------------------------
-    # Read Source File
-    # ---------------------------------------------------------------------
     df = (
         spark.read
         .option("header", "true")
@@ -170,24 +161,14 @@ def process_file(csv_key):
         .csv(full_path)
     )
 
-    logger.info(f"Detected columns: {df.columns}")
-    
-    # ---------------------------------------------------------------------
-    # Validate Column Count and Handle Trailing Comma
-    # ---------------------------------------------------------------------
     num_cols = len(df.columns)
-    logger.info(f"Column count: {num_cols}")
-    
-    if num_cols not in (28, 29):
-        raise ValueError(f"Unexpected column count: {num_cols}. Expected 28 or 29 columns.")
-    
-    has_trailing_comma = (num_cols == 29)
-    if has_trailing_comma:
+
+    # if num_cols not in (28, 29):
+        # raise ValueError(f"Unexpected column count: {num_cols}")
+
+    if num_cols == 29:
         extra_column_name = df.columns[-1]
-        logger.info(f"Detected trailing comma column: '{extra_column_name}' - will handle as Extract_T")
-        # Drop the trailing comma column BEFORE transformation
         df = df.drop(extra_column_name)
-        logger.info(f"Dropped trailing comma column: '{extra_column_name}'")
 
     structured_df = (
         df
@@ -221,39 +202,44 @@ def process_file(csv_key):
         .withColumn("TransType", col("TRANS").cast(StringType()))
         #.withColumn("Extract_T", current_timestamp())
         .withColumn("Extract_T", lit(None).cast(TimestampType()))
-        .select(
-            "ClubName", "ClubNo", "RegionNo", "GroupCode",
-            "SubGroupCode", "AgentType", "CampaignCode",
-            "CampaignType", "TransactionDate", "AdminFee",
-            "PrimaryIndicator", "AdultIndicator", "DependantIndicator",
-            "PlusProductIndicator", "FamilyPlusIndicator",
-            "PremierProductIndicator", "FamilyPremierIndicator",
-            "RVCyIIndicator", "ARIndicator", "MemberNo",
-            "SalesRegion", "OfficeNo", "OfficeName", "EmployeeNo",
-            "AgentID", "JobCode", "Rolecode", "TransType", "Extract_T"
-        )
+        .select("*")
     )
 
+    # structured_df.createOrReplaceTempView("staging_table")
 
-    # ---------------------------------------------------------------------
-    # Write to Iceberg
-    # ---------------------------------------------------------------------
-    logger.info(f"Writing to Iceberg table: {TARGET_IDENTIFIER}")
+    # ------------------------------------------------------------
+    # 1. CREATE OR REPLACE W1 TABLE (NO PARTITION)
+    # ------------------------------------------------------------
+    # spark.sql(f"""
+    #     CREATE OR REPLACE TABLE {W1_TABLE}
+    #     USING iceberg
+    #     AS
+    #     SELECT * FROM staging_table
+    # """)
+    
+    structured_df.writeTo(W1_TABLE).using("iceberg").createOrReplace()
 
-    structured_df.createOrReplaceTempView("staging_table")
-
+    # ------------------------------------------------------------
+    # 2. DELETE BASE TABLE DATA (BASED ON (TRANSACTIONDATE div 100))
+    # ------------------------------------------------------------
     spark.sql(f"""
-        CREATE OR REPLACE TABLE {TARGET_IDENTIFIER}
-        USING iceberg
-        AS
-        SELECT * FROM staging_table
+        Delete From {BASE_TABLE} where (transactiondate div 100) in (select distinct (transactiondate div 100) from {W1_TABLE})
     """)
 
-    logger.info("Iceberg write completed")
+    # ------------------------------------------------------------
+    # 3. INSERT FROM W1 TO BASE TABLE
+    # ------------------------------------------------------------
+    spark.sql(f"""
+        INSERT INTO {BASE_TABLE}
+        SELECT * FROM {W1_TABLE}
+    """)
 
     archive_raw_file(TGT_TBL, csv_key)
     write_log(TGT_TBL, "Job completed successfully")
 
+# -------------------------------------------------------------------------
+# DRIVER
+# -------------------------------------------------------------------------
 
 def main():
     prefix = f"{raw_file_folder}/{TGT_TBL}/"
@@ -262,15 +248,11 @@ def main():
         csv_key = get_raw_file(data_bucket, prefix)
         process_file(csv_key)
         job.commit()
-        logger.info("Glue job completed successfully")
 
     except Exception as e:
         error_message = f"Job failed: {str(e)}\n{traceback.format_exc()}"
         write_log(TGT_TBL, error_message)
         raise
 
-# -------------------------------------------------------------------------
-# Driver
-# -------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
