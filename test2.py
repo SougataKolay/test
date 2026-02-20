@@ -148,10 +148,10 @@ def get_raw_file(bucket, prefix):
 # -------------------------------------------------------------------------
 
 def process_file(csv_key):
-    print("csf key = ", csv_key)
+
     full_path = f"s3://{data_bucket}/{csv_key}"
     logger.info(f"Reading file: {full_path}")
-    print("full Path = ",full_path)
+
     df = (
         spark.read
         .option("header", "true")
@@ -243,19 +243,19 @@ def process_file(csv_key):
     )
 
     
+    
+    
+
     # structured_df.createOrReplaceTempView("staging_table")
 
     # ------------------------------------------------------------
-    # 1. CREATE OR REPLACE W1 TABLE (NO PARTITION)
+    # 1. Truncate load W1 TABLE (NO PARTITION)
     # ------------------------------------------------------------
-    # spark.sql(f"""
-    #     CREATE OR REPLACE TABLE {W1_TABLE}
-    #     USING iceberg
-    #     AS
-    #     SELECT * FROM staging_table
-    # """)
+    spark.sql(f"""
+        drop table if exists {W1_TABLE} purge;
+    """)
     
-    structured_df.writeTo(W1_TABLE).using("iceberg").createOrReplace()
+    structured_df.writeTo(W1_TABLE).using("iceberg").create()
 
     # ------------------------------------------------------------
     # 2. DELETE BASE TABLE DATA (BASED ON (TRANSACTIONDATE div 100))
